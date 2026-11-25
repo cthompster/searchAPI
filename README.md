@@ -42,12 +42,18 @@ result, time and, for a failure, the message and stack trace.
   tests. Running one class or test from the IDE, or `-Dgroups`, is recorded as a full run; the trend's
   shorter bars show such partial runs.
 - Results are passed, failed, skipped (`@Disabled`) or aborted (a failed assumption; like Surefire, not
-  a failure). The pass rate counts only passed and failed tests.
+  a failure). The pass rate counts only passed and failed tests, rounded down
+  (so a run with a failure never shows 100%).
+- A run is one JUnit test plan: the whole `mvn test` with this project's settings. With
+  `-DforkCount=2` or more, or `-Dsurefire.rerunFailingTestsCount`, Surefire runs several plans, and each
+  is saved as its own run.
 - `-DhistoryKeep=N` keeps the newest N runs (default 50; `0` keeps all); `-DhistoryDir=…` moves the folder.
 - The folder is git-ignored and outside `target/`, so `mvn clean` keeps it. A problem writing it, or an
   invalid setting, is printed as a warning and never fails the run.
 - `RunHistoryListenerTest` checks the history offline (in a temporary folder, no API calls); it runs with
   `mvn test` and takes well under a second. Run it alone with `mvn test -Dtest=RunHistoryListenerTest`.
+  Its sample test classes (nested in it) run only inside it; Maven skips them, but running the whole
+  package from the IDE lists their 7 tests as skipped.
 
 The latest run's raw results are in `target/surefire-reports/`. When a shared response check fails (status, content type,
 `resultCount`, error body), the full request and response are logged; other failed assertions show

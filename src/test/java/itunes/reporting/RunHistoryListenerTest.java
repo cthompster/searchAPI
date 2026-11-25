@@ -4,27 +4,44 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import itunes.reporting.RunHistoryListener.Result;
 import itunes.reporting.RunHistoryListener.Run;
 import itunes.reporting.RunHistoryListener.Status;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.platform.engine.discovery.DiscoverySelectors;
+import org.junit.platform.launcher.Launcher;
+import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.core.LauncherConfig;
+import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
+import org.junit.platform.launcher.core.LauncherFactory;
 
 /** Offline tests of the run history (no API calls); they write only to a temporary folder. */
 @DisplayName("run history report")
@@ -67,7 +84,8 @@ class RunHistoryListenerTest {
                         "run-0002_2026-11-25_09-30-15.html", "runs.tsv"), files(), "no temporary files left"),
                 () -> assertEquals(2, RunHistoryListener.readRuns(dir).size()));
         String index = Files.readString(dir.resolve("index.html"), StandardCharsets.UTF_8);
-        assertTrue(index.indexOf("#2</a>") < index.indexOf("#1</a>"), "the latest run is listed first");
+        // Table links look like ">#2</a>"; the "Latest: run #2" line above the table doesn't.
+        assertTrue(index.indexOf("\">#2</a>") < index.indexOf("\">#1</a>"), "the latest run is listed first");
     }
 
     @Test
@@ -166,7 +184,6 @@ class RunHistoryListenerTest {
     @Test
     @DisplayName("damaged runs.tsv lines are dropped, including file names that leave the folder")
     void readsDamagedRunsFile() throws IOException {
-        Path outside = Files.writeString(dir.resolve("outside.html"), "keep me");
         Path history = Files.createDirectory(dir.resolve("history"));
         Files.writeString(history.resolve("runs.tsv"), String.join("\n",
                 "1\t2026-11-25 09:00:00\tfull\t1\t0\t0\t0\t10\trun-0001_a.html",
@@ -175,9 +192,37 @@ class RunHistoryListenerTest {
                 "4\t2026-11-25 09:00:00\tfull\t1\t0\t0\t0\t10\trun-4_/../../outside.html",
                 ""));
         assertEquals(List.of(1), RunHistoryListener.readRuns(history).stream().map(Run::number).toList());
+    }
 
-        new RunHistoryListener(history.toString(), "1", null).save(history, RESULTS, STARTED, 10);
-        assertTrue(Files.exists(outside), "nothing outside the history folder is deleted");
+    @Test
+    @DisplayName("invalid bytes in runs.tsv drop only that line, and the next run is still saved")
+    void readsRunsFileWithInvalidBytes() throws IOException {
+        byte[] valid = "1\t2026-11-25 09:00:00\tfull\t1\t0\t0\t0\t10\trun-0001_a.html\n"
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] content = new byte[valid.length + 2];
+        content[0] = (byte) 0xC3;   // a truncated UTF-8 sequence
+        content[1] = '\n';
+        System.arraycopy(valid, 0, content, 2, valid.length);
+        Files.write(dir.resolve("runs.tsv"), content);
+
+        assertEquals(List.of(1), RunHistoryListener.readRuns(dir).stream().map(Run::number).toList());
+        assertEquals(2, listener(null, null).save(dir, RESULTS, STARTED, 10).number());
+    }
+
+    @Test
+    @DisplayName("temporary files left by a killed run are deleted once they're stale, fresh ones are kept")
+    void deletesStaleTempFiles() throws IOException {
+        Path stale = Files.writeString(dir.resolve("index.html.123.tmp"), "left over");
+        Files.setLastModifiedTime(stale, FileTime.from(Instant.now().minus(Duration.ofHours(1))));
+        Path fresh = Files.writeString(dir.resolve("runs.tsv.456.tmp"), "being written");
+        Path other = Files.writeString(dir.resolve("notes.tmp"), "not ours");
+        Files.setLastModifiedTime(other, FileTime.from(Instant.now().minus(Duration.ofHours(1))));
+
+        RunHistoryListener.deleteStaleTempFiles(dir);
+        assertAll(
+                () -> assertFalse(Files.exists(stale)),
+                () -> assertTrue(Files.exists(fresh), "a save in progress keeps its file"),
+                () -> assertTrue(Files.exists(other), "only the listener's own temporary files are deleted"));
     }
 
     @ParameterizedTest(name = "historyKeep=\"{0}\" -> {1}")
@@ -208,6 +253,145 @@ class RunHistoryListenerTest {
     void passRate() {
         assertAll(
                 () -> assertEquals("75%", RunHistoryListener.passRate(new Run(1, "", "full", 3, 1, 2, 5, 0, "run-1_a.html"))),
-                () -> assertEquals("–", RunHistoryListener.passRate(new Run(1, "", "full", 0, 0, 1, 1, 0, "run-1_a.html"))));
+                () -> assertEquals("–", RunHistoryListener.passRate(new Run(1, "", "full", 0, 0, 1, 1, 0, "run-1_a.html"))),
+                () -> assertEquals("99%", RunHistoryListener.passRate(new Run(1, "", "full", 199, 1, 0, 0, 0, "run-1_a.html")),
+                        "a run with a failure never shows 100%"),
+                () -> assertEquals("100%", RunHistoryListener.passRate(new Run(1, "", "full", 200, 0, 0, 0, 0, "run-1_a.html"))));
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // How JUnit's events become rows: sample classes run through a launcher of their own, with only this
+    // listener registered (the real one isn't), so nothing is written outside the temporary folder.
+    // Surefire skips nested classes, so `mvn test` never runs them directly; an IDE run of the whole
+    // package does discover them, and reports their 7 tests as skipped (disabled outside runFixtures).
+
+    /** Set only while {@link #runFixtures} runs, so the sample classes never run on their own (e.g. in the IDE). */
+    private static volatile boolean fixturesEnabled;
+
+    static boolean fixturesEnabled() {
+        return fixturesEnabled;
+    }
+
+    private static void runFixtures(RunHistoryListener listener, Class<?>... classes) {
+        LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
+                .selectors(Arrays.stream(classes).map(DiscoverySelectors::selectClass).toList())
+                .build();
+        Launcher launcher = LauncherFactory.create(LauncherConfig.builder()
+                .enableTestExecutionListenerAutoRegistration(false)
+                .build());
+        fixturesEnabled = true;
+        try {
+            launcher.execute(request, listener);
+        } finally {
+            fixturesEnabled = false;
+        }
+    }
+
+    @Test
+    @DisplayName("JUnit results become rows: passed, failed, aborted, skipped and failed class setup")
+    void recordsJUnitEvents() throws IOException {
+        runFixtures(listener(null, null), SetupFails.class, DisabledClass.class, Mixed.class);
+
+        Run run = RunHistoryListener.readRuns(dir).get(0);
+        String html = Files.readString(dir.resolve(run.file()), StandardCharsets.UTF_8);
+        assertAll(
+                () -> assertEquals(1, run.passed(), "Mixed.passes"),
+                () -> assertEquals(2, run.failed(), "Mixed.fails and SetupFails' @BeforeAll"),
+                () -> assertEquals(1, run.aborted(), "Mixed.aborted (failed assumption)"),
+                () -> assertEquals(3, run.skipped(), "both tests of DisabledClass and the @Disabled parameterized test"),
+                () -> assertTrue(html.contains("fixture: setup fails (class setup/teardown)")),
+                () -> assertTrue(html.contains("setup broke")),
+                () -> assertTrue(html.contains("<h2>fixture: disabled class")),
+                () -> assertFalse(html.contains("never runs"), "tests of a class whose setup failed aren't listed"));
+    }
+
+    @Test
+    @DisplayName("each test plan is its own run, even with the same listener")
+    void eachPlanIsItsOwnRun() throws IOException {
+        RunHistoryListener l = listener(null, null);
+        runFixtures(l, Mixed.class);
+        runFixtures(l, DisabledClass.class);
+
+        List<Run> runs = RunHistoryListener.readRuns(dir);
+        assertAll(
+                () -> assertEquals(2, runs.size()),
+                () -> assertEquals(4, runs.get(0).total()),
+                () -> assertEquals(2, runs.get(1).total(), "the second run doesn't repeat the first run's results"),
+                () -> assertEquals(2, runs.get(1).skipped()));
+    }
+
+    @Test
+    @DisplayName("a history folder that can't be written only prints a warning")
+    void unwritableFolderOnlyWarns() throws IOException {
+        Path notAFolder = Files.writeString(dir.resolve("a-file"), "not a folder");
+        // The launcher itself swallows exceptions from listeners, so the proof that the listener handled
+        // the problem is its own warning.
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream originalErr = System.err;
+        System.setErr(new PrintStream(err, true, StandardCharsets.UTF_8));
+        try {
+            runFixtures(new RunHistoryListener(notAFolder.toString(), null, null), Mixed.class);
+        } finally {
+            System.setErr(originalErr);
+        }
+        assertAll(
+                () -> assertTrue(err.toString(StandardCharsets.UTF_8)
+                        .contains("[run history] WARNING: this run's history wasn't saved"), err::toString),
+                () -> assertEquals("not a folder", Files.readString(notAFolder)));
+    }
+
+    @DisplayName("fixture: setup fails")
+    @EnabledIf("itunes.reporting.RunHistoryListenerTest#fixturesEnabled")
+    static class SetupFails {
+        @BeforeAll
+        static void breakSetup() {
+            throw new IllegalStateException("setup broke");
+        }
+
+        @Test
+        @DisplayName("never runs")
+        void neverRuns() {
+            // not reached: the class setup fails
+        }
+    }
+
+    @DisplayName("fixture: disabled class")
+    @Disabled("fixture for RunHistoryListenerTest")
+    static class DisabledClass {
+        @Test
+        void first() {
+            // skipped with its class
+        }
+
+        @Test
+        void second() {
+            // skipped with its class
+        }
+    }
+
+    @DisplayName("fixture: mixed results")
+    @EnabledIf("itunes.reporting.RunHistoryListenerTest#fixturesEnabled")
+    static class Mixed {
+        @Test
+        void passes() {
+            // passes
+        }
+
+        @Test
+        void fails() {
+            fail("expected <1>");
+        }
+
+        @Test
+        void aborted() {
+            assumeTrue(false, "not applicable");
+        }
+
+        @Disabled("fixture")
+        @ParameterizedTest
+        @ValueSource(ints = {1, 2})
+        void disabledParameterized(int value) {
+            assertTrue(value > 0);
+        }
     }
 }

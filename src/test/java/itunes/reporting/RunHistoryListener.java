@@ -3,6 +3,7 @@ package itunes.reporting;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
@@ -22,8 +23,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.TreeSet;
 import java.util.OptionalInt;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -46,6 +47,10 @@ import org.junit.platform.launcher.TestPlan;
  * {@code runs.tsv} is the list the index is built from. A run is marked {@code filtered} only when Maven's
  * {@code -Dtest=…} chose the tests; a single class run from the IDE, or {@code -Dgroups}, shows as full.
  * The numbers keep counting up; only the newest {@code historyKeep} runs are kept.
+ *
+ * <p>A run is one JUnit test plan. With this project's Surefire settings (one fork) that is the whole
+ * {@code mvn test}; with {@code -DforkCount=2} or more, or {@code -Dsurefire.rerunFailingTestsCount}, Surefire
+ * runs several plans, and each is saved as its own run (a rerun of failed tests is then labelled as full).
  *
  * <p>Results: passed, failed, skipped ({@code @Disabled}) and aborted (a failed assumption, which like
  * Surefire doesn't count as a failure). A class whose {@code @BeforeAll}/{@code @AfterAll} fails is listed
@@ -73,6 +78,9 @@ public final class RunHistoryListener implements TestExecutionListener {
     static final String INDEX_FILE = "index.html";
     /** A report written by this class: a plain file name, so it can't point outside the history folder. */
     static final Pattern REPORT_FILE = Pattern.compile("run-(\\d{1,9})_[A-Za-z0-9_-]+\\.html");
+    /** A temporary file of {@link #replace}: {@code index.html.<random>.tmp} or {@code runs.tsv.<random>.tmp}. */
+    static final Pattern TEMP_FILE = Pattern.compile("(index\\.html|runs\\.tsv)\\.[0-9]+\\.tmp");
+    static final Duration STALE_TEMP = Duration.ofMinutes(10);
 
     private static final DateTimeFormatter FILE_STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.ROOT);
     private static final DateTimeFormatter SHOWN_STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
@@ -80,7 +88,10 @@ public final class RunHistoryListener implements TestExecutionListener {
 
     enum Status { PASSED, FAILED, ABORTED, SKIPPED }
 
-    /** One test (or a class whose setup or teardown failed) in a run. */
+    /**
+     * One test (or a container whose setup or teardown failed) in a run. {@code millis} is -1 for a skipped
+     * test, which has no time (shown as "–").
+     */
     record Result(String group, String name, Status status, long millis, String message, String trace) { }
 
     /** One line of runs.tsv. */
@@ -274,7 +285,32 @@ public final class RunHistoryListener implements TestExecutionListener {
         if (cutoff > 0) {
             deleteReportsBelow(dir, cutoff);
         }
+        deleteStaleTempFiles(dir);
         return run;
+    }
+
+    /**
+     * Deletes temporary files of {@link #replace} left behind by a run that was killed mid-save, once they
+     * are older than {@link #STALE_TEMP} (a run that is saving right now is never that slow). Best effort:
+     * it runs after the run is saved, so a file that vanishes meanwhile (another run moved it into place) or
+     * can't be deleted is left for the next run, and never turns a saved run into a warning.
+     */
+    static void deleteStaleTempFiles(Path dir) {
+        long staleBefore = System.currentTimeMillis() - STALE_TEMP.toMillis();
+        try (Stream<Path> files = Files.list(dir)) {
+            for (Path p : (Iterable<Path>) files::iterator) {
+                try {
+                    if (TEMP_FILE.matcher(p.getFileName().toString()).matches() && Files.isRegularFile(p)
+                            && Files.getLastModifiedTime(p).toMillis() < staleBefore) {
+                        Files.deleteIfExists(p);
+                    }
+                } catch (IOException e) {
+                    // gone or locked: the next run tries again
+                }
+            }
+        } catch (IOException | UncheckedIOException e) {
+            // the folder can't be listed right now: the next run tries again
+        }
     }
 
     /**
@@ -334,7 +370,9 @@ public final class RunHistoryListener implements TestExecutionListener {
         if (!Files.exists(file)) {
             return runs;
         }
-        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+        // Decoded leniently (invalid bytes become U+FFFD) so a damaged file only loses the damaged lines,
+        // which the checks below drop, instead of stopping the history from being saved.
+        for (String line : new String(Files.readAllBytes(file), StandardCharsets.UTF_8).lines().toList()) {
             String[] f = line.split("\t", -1);
             if (f.length != 9 || !REPORT_FILE.matcher(f[8]).matches()) {
                 continue;   // a damaged line is dropped
@@ -531,7 +569,8 @@ public final class RunHistoryListener implements TestExecutionListener {
     /** Passed out of the tests that ran to a pass or fail (skipped and aborted ones left out). */
     static String passRate(Run r) {
         int decided = r.passed() + r.failed();
-        return decided == 0 ? "–" : String.format(Locale.ROOT, "%.0f%%", 100.0 * r.passed() / decided);
+        // Rounded down, so a run with any failure never shows 100%.
+        return decided == 0 ? "–" : (int) Math.floor(100.0 * r.passed() / decided) + "%";
     }
 
     private static String cards(Run run) {
