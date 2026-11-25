@@ -138,7 +138,8 @@ public final class ITunesApi {
     /**
      * How far a result count may drift from {@code limit}. The live API returns a few results more
      * or fewer when results of several kinds are merged (e.g. 207 for limit 200, 23 for 25), so
-     * counts are checked within 10% (at least 2) instead of exactly.
+     * counts are checked within 10% (at least 2) instead of exactly. TC-M06 also uses it for how many
+     * results two lists of {@code limit} results may differ by.
      */
     public static int limitTolerance(int limit) {
         return Math.max(2, (int) Math.ceil(limit * 0.10));
