@@ -24,7 +24,11 @@ Objectives:
   that equivalent requests return the same results. Repeating an identical request returns the same
   list in the same order (checked live), so those comparisons are exact. The term and
   unknown-parameter comparisons (TC-T02, TC-T03, TC-X02) compare songs only, so a music video mixed
-  into one list can't make them fail; TC-M06 compares every result.
+  into one list can't make them fail. TC-M06 compares every result of two *different* requests (no
+  `media` vs `media=all`), whose mixed-media ranking can shift between the two calls (seen live: one
+  result dropped and another added), so it requires almost the same results rather than the same list:
+  at most 10%, and at least 2, of 10 may differ. A different default (e.g. `media=music`) shares
+  none of them (checked live).
 - Equivalence partitioning and boundary values for `limit` (0, 1, 200, 201, negative, non-numeric)
   and for codes (`GB`/`gb`, 2-letter vs 3-letter, unknown).
 
@@ -78,7 +82,7 @@ All cases are automated. "Method" is in `src/test/java/itunes/`.
 | TC-M03 | `media=movie`, `media=shortFilm` | Accepted (200), `resultCount` 0 | `MediaTypeTest.emptyMediaTypesAreAccepted` |
 | TC-M04 | `media=bogus`, `media=MUSIC` | 400, error names `mediaType` | `MediaTypeTest.invalidMediaIsRejected` |
 | TC-M05 | `term=love&media=music&limit=200` | Both songs and music videos | `MediaTypeTest.musicIncludesMusicVideos` |
-| TC-M06 | `term=love&limit=10` with no `media` vs `media=all` | Same results in the same order (default is `all`) | `MediaTypeTest.defaultMediaIsAll` |
+| TC-M06 | `term=love&limit=10` with no `media` vs `media=all` | Almost the same results: all but at most 2 of 10 shared (default is `all`) | `MediaTypeTest.defaultMediaIsAll` |
 
 ### limit
 

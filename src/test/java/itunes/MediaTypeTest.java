@@ -1,5 +1,6 @@
 package itunes;
 
+import static itunes.support.ITunesApi.limitTolerance;
 import static itunes.support.ITunesApi.results;
 import static itunes.support.ITunesApi.searchOk;
 import static itunes.support.ITunesApi.searchRejected;
@@ -10,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import itunes.support.ITunesApi;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -21,6 +23,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @DisplayName("media parameter")
 class MediaTypeTest {
+
+    /** How many results TC-M06 compares. */
+    private static final int DEFAULT_MEDIA_LIMIT = 10;
 
     /**
      * Each media value with the result types it may return: the result's {@code kind}, or its
@@ -76,17 +81,28 @@ class MediaTypeTest {
         assertTrue(types.contains("music-video"), "expected a music video, got " + types);
     }
 
+    /**
+     * The two searches are separate live requests a few seconds apart, and the mixed-media ranking can
+     * change in between (one result dropped, another added), so they must share almost all results rather
+     * than match exactly: at most {@code limitTolerance(10)} = 2 of 10 may differ. A different default
+     * (e.g. music only) would return a mostly different list and still fail.
+     */
     @Test
     @DisplayName("TC-M06 leaving media out searches all media (the documented default)")
     void defaultMediaIsAll() {
         // Audiobooks have no trackId, so they're identified by collectionId.
         String ids = "results.collect { it.trackId ?: it.collectionId }";
-        List<Long> withoutMedia = searchOk(Map.of("term", "love", "limit", 10)).jsonPath().getList(ids, Long.class);
-        List<Long> mediaAll = searchOk(Map.of("term", "love", "media", "all", "limit", 10))
+        List<Long> withoutMedia = searchOk(Map.of("term", "love", "limit", DEFAULT_MEDIA_LIMIT))
+                .jsonPath().getList(ids, Long.class);
+        List<Long> mediaAll = searchOk(Map.of("term", "love", "media", "all", "limit", DEFAULT_MEDIA_LIMIT))
                 .jsonPath().getList(ids, Long.class);
 
         assertFalse(withoutMedia.isEmpty(), "expected results");
-        assertEquals(mediaAll, withoutMedia);
+        Set<Long> shared = new HashSet<>(withoutMedia);
+        shared.retainAll(mediaAll);
+        int needed = Math.max(withoutMedia.size(), mediaAll.size()) - limitTolerance(DEFAULT_MEDIA_LIMIT);
+        assertTrue(shared.size() >= needed, "expected at least " + needed + " shared results, got "
+                + shared.size() + ":\n  without media: " + withoutMedia + "\n  media=all:     " + mediaAll);
     }
 
     @ParameterizedTest(name = "TC-M04 media={0} is rejected")
