@@ -5,6 +5,7 @@ import static itunes.support.ITunesApi.lower;
 import static itunes.support.ITunesApi.results;
 import static itunes.support.ITunesApi.search;
 import static itunes.support.ITunesApi.searchOk;
+import static itunes.support.ITunesApi.songIds;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -16,7 +17,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 @DisplayName("term parameter")
 class TermSearchTest {
@@ -44,30 +45,39 @@ class TermSearchTest {
                 .queryParam("term", "jack%20johnson").queryParam("media", "music").queryParam("limit", 10)
                 .when().get());
 
-        List<Long> plusIds = plus.jsonPath().getList("results.trackId", Long.class);
-        assertFalse(plusIds.isEmpty(), "expected results for 'jack+johnson'");
-        assertEquals(plusIds, percent20.jsonPath().getList("results.trackId", Long.class));
+        // Identical requests return the same list each time (checked live), so the lists must match.
+        List<Long> plusIds = songIds(plus);
+        assertFalse(plusIds.isEmpty(), "expected songs for 'jack+johnson'");
+        assertEquals(plusIds, songIds(percent20));
     }
 
     @Test
     @DisplayName("TC-T03 the term is case-insensitive")
     void termIsCaseInsensitive() {
-        List<Long> lowerIds = searchOk(Map.of("term", "jack johnson", "media", "music", "limit", 10))
-                .jsonPath().getList("results.trackId", Long.class);
-        List<Long> upperIds = searchOk(Map.of("term", "JACK JOHNSON", "media", "music", "limit", 10))
-                .jsonPath().getList("results.trackId", Long.class);
+        List<Long> lowerIds = songIds(searchOk(Map.of("term", "jack johnson", "media", "music", "limit", 10)));
+        List<Long> upperIds = songIds(searchOk(Map.of("term", "JACK JOHNSON", "media", "music", "limit", 10)));
 
-        assertFalse(lowerIds.isEmpty(), "expected results for 'jack johnson'");
+        assertFalse(lowerIds.isEmpty(), "expected songs for 'jack johnson'");
         assertEquals(lowerIds, upperIds);
     }
 
-    @ParameterizedTest(name = "TC-T04 special characters: {0}")
-    @ValueSource(strings = {"AC/DC", "Beyoncé"})
-    @DisplayName("TC-T04 terms with characters that must be URL-encoded find the artist")
-    void encodedCharactersFindArtist(String artist) {
-        List<Map<String, Object>> results =
-                results(searchOk(Map.of("term", artist, "media", "music", "limit", 5)));
+    /**
+     * Sends the term already percent-encoded, with Rest Assured's own encoding turned off, so the test
+     * proves the API decodes {@code %2F} ("/") and UTF-8 sequences ("é") rather than relying on how
+     * Rest Assured would encode them.
+     */
+    @ParameterizedTest(name = "TC-T04 term={0} finds {1}")
+    @CsvSource({
+            "AC%2FDC,      AC/DC",
+            "Beyonc%C3%A9, Beyoncé",
+    })
+    @DisplayName("TC-T04 percent-encoded special characters are decoded and find the artist")
+    void encodedCharactersFindArtist(String encodedTerm, String artist) {
+        List<Map<String, Object>> results = results(checkOk(search().urlEncodingEnabled(false)
+                .queryParam("term", encodedTerm).queryParam("media", "music").queryParam("limit", 5)
+                .when().get()));
 
+        assertFalse(results.isEmpty(), "expected results for " + encodedTerm);
         assertTrue(results.stream().anyMatch(r -> lower(r.get("artistName")).contains(lower(artist))),
                 "no result by " + artist);
     }

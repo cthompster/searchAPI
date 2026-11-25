@@ -8,10 +8,13 @@ import static org.hamcrest.Matchers.startsWith;
 import io.restassured.RestAssured;
 import io.restassured.builder.RequestSpecBuilder;
 import io.restassured.config.EncoderConfig;
+import io.restassured.config.HttpClientConfig;
+import io.restassured.config.LogConfig;
 import io.restassured.config.RestAssuredConfig;
 import io.restassured.parsing.Parser;
 import io.restassured.response.Response;
 import io.restassured.specification.RequestSpecification;
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,6 +28,8 @@ import java.util.Objects;
  *   <li>{@code baseUri}: default {@code https://itunes.apple.com}</li>
  *   <li>{@code requestDelayMs}: minimum gap between requests, default 3000. Apple throttles the
  *       API at roughly 20 requests a minute.</li>
+ *   <li>{@code httpTimeoutMs}: connect and read timeout for each request, default 30000, so a
+ *       request the server never answers fails instead of hanging.</li>
  * </ul>
  */
 public final class ITunesApi {
@@ -35,16 +40,25 @@ public final class ITunesApi {
     /** The API answers with JSON but labels it {@code text/javascript}. */
     public static final String CONTENT_TYPE = "text/javascript";
 
+    private static final Duration HTTP_TIMEOUT = Duration.ofMillis(Long.getLong("httpTimeoutMs", 30_000L));
+
     static {
         RestAssured.registerParser(CONTENT_TYPE, Parser.JSON);
-        RestAssured.enableLoggingOfRequestAndResponseIfValidationFails();
     }
 
     private static final RequestSpecification REQUEST = new RequestSpecBuilder()
             .setBaseUri(BASE_URI)
             .setBasePath(SEARCH_PATH)
-            .setConfig(RestAssuredConfig.config().encoderConfig(
-                    EncoderConfig.encoderConfig().defaultQueryParameterCharset("UTF-8")))
+            .setConfig(RestAssuredConfig.config()
+                    // Rest Assured's default already, pinned so non-ASCII terms (TC-T04, "Beyoncé")
+                    // are always sent as UTF-8.
+                    .encoderConfig(EncoderConfig.encoderConfig().defaultQueryParameterCharset("UTF-8"))
+                    // Set here, not globally, because this config replaces the global one for these
+                    // requests: a failed then() check logs the request and the response.
+                    .logConfig(LogConfig.logConfig().enableLoggingOfRequestAndResponseIfValidationFails())
+                    .httpClient(HttpClientConfig.httpClientConfig()
+                            .connectTimeout(HTTP_TIMEOUT)
+                            .readTimeout(HTTP_TIMEOUT)))
             .addFilter(new ThrottleFilter(Long.getLong("requestDelayMs", 3000L)))
             .build();
 
@@ -94,6 +108,14 @@ public final class ITunesApi {
     /** The results array as a list of JSON objects. */
     public static List<Map<String, Object>> results(Response response) {
         return response.jsonPath().getList("results");
+    }
+
+    /**
+     * The track IDs of the songs in a response, in order. Comparing only songs keeps two searches
+     * comparable even if music videos are mixed in (see TEST_PLAN.md, D-03 and D-06).
+     */
+    public static List<Long> songIds(Response response) {
+        return response.jsonPath().getList("results.findAll { it.kind == 'song' }.trackId", Long.class);
     }
 
     /** What a result is: its {@code kind} if it has one (songs, apps...), else its {@code wrapperType}. */

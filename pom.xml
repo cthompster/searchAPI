@@ -14,6 +14,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.14.4</junit.version>
         <rest-assured.version>6.3.0</rest-assured.version>
+        <hamcrest.version>3.0</hamcrest.version>
     </properties>
 
     <dependencyManagement>
@@ -40,10 +41,40 @@
             <version>${rest-assured.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- Used directly (org.hamcrest.Matchers), so declared rather than taken from rest-assured. -->
+        <dependency>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest</artifactId>
+            <version>${hamcrest.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.7.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-build-tools</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9,)</version>
+                                </requireMavenVersion>
+                                <requireJavaVersion>
+                                    <version>[17,)</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -57,7 +88,7 @@
             </plugin>
             <plugin>
                 <!-- Surefire forwards -Dkey=value from the mvn command line to the tests as system
-                     properties, which ITunesApi reads (baseUri, requestDelayMs). -->
+                     properties, which ITunesApi reads (baseUri, requestDelayMs, httpTimeoutMs). -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.6.1</version>

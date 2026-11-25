@@ -18,7 +18,7 @@ The tests call the live API, so they need internet access.
 
 ## How to run
 
-Requires Java 17 and Maven 3.9+.
+Requires Java 17 and Maven 3.9+ (the build checks both).
 
 | Command | What it does |
 |---|---|
@@ -27,5 +27,8 @@ Requires Java 17 and Maven 3.9+.
 | `mvn test -Dtest='LimitTest#limitOneIsExact'` | One test |
 | `mvn -q test-compile` | Compile only (warnings fail the build) |
 | `mvn test -DrequestDelayMs=5000` | Slower requests, if the API starts throttling |
+| `mvn test -DhttpTimeoutMs=60000` | Longer connect/read timeout per request (default 30 s) |
 
-Results are in `target/surefire-reports/`. A failed check logs the full request and response.
+Results are in `target/surefire-reports/`. When a shared response check fails (status, content type,
+`resultCount`, error body), the full request and response are logged; other failed assertions show
+their own message.

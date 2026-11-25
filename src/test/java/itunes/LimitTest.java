@@ -63,14 +63,12 @@ class LimitTest {
         assertAbout(200, count(200));
     }
 
+    /** About 200 results, not more and not a fallback to the default 50: the limit is capped. */
     @ParameterizedTest(name = "TC-L05 limit={0}")
     @ValueSource(ints = {201, 500})
-    @DisplayName("TC-L05 a limit above 200 isn't rejected; the count stays near the maximum")
+    @DisplayName("TC-L05 a limit above 200 isn't rejected; about 200 results are returned")
     void limitAboveMaximumIsCapped(int limit) {
-        int count = count(limit);
-        assertTrue(count > 0, "expected results for limit=" + limit);
-        assertTrue(count <= MAX_LIMIT + limitTolerance(MAX_LIMIT),
-                "limit=" + limit + " returned " + count + " results, more than the maximum");
+        assertAbout(MAX_LIMIT, count(limit));
     }
 
     @ParameterizedTest(name = "TC-L06 limit={0}")

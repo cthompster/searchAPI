@@ -5,9 +5,11 @@ import static itunes.support.ITunesApi.searchOk;
 import static itunes.support.ITunesApi.searchRejected;
 import static itunes.support.ITunesApi.typeOf;
 import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import itunes.support.ITunesApi;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,12 +53,40 @@ class MediaTypeTest {
         assertFalse(results(searchOk(Map.of("term", "love", "media", "all", "limit", 5))).isEmpty());
     }
 
-    /** Documented values that currently return no results (see TEST_PLAN.md, D-05). */
-    @ParameterizedTest(name = "TC-M03 media={0} is accepted")
+    /**
+     * Documented values that currently return no results (see TEST_PLAN.md, D-05). If Apple fixes
+     * them this fails on purpose: replace the zero check with a type check in TC-M01.
+     */
+    @ParameterizedTest(name = "TC-M03 media={0} is accepted but returns nothing")
     @ValueSource(strings = {"movie", "shortFilm"})
-    @DisplayName("TC-M03 media values that currently return nothing are still accepted")
+    @DisplayName("TC-M03 movie and shortFilm are accepted but currently return no results")
     void emptyMediaTypesAreAccepted(String media) {
-        searchOk(Map.of("term", "love", "media", media, "limit", 5));
+        assertEquals(0, searchOk(Map.of("term", "love", "media", media, "limit", 5))
+                .jsonPath().getInt("resultCount"));
+    }
+
+    /** Not documented in API.md (see TEST_PLAN.md, D-06). limit=200 so ranking changes don't matter. */
+    @Test
+    @DisplayName("TC-M05 media=music includes music videos as well as songs")
+    void musicIncludesMusicVideos() {
+        List<String> types = results(searchOk(Map.of("term", "love", "media", "music", "limit", 200)))
+                .stream().map(ITunesApi::typeOf).toList();
+
+        assertTrue(types.contains("song"), "expected songs, got " + types);
+        assertTrue(types.contains("music-video"), "expected a music video, got " + types);
+    }
+
+    @Test
+    @DisplayName("TC-M06 leaving media out searches all media (the documented default)")
+    void defaultMediaIsAll() {
+        // Audiobooks have no trackId, so they're identified by collectionId.
+        String ids = "results.collect { it.trackId ?: it.collectionId }";
+        List<Long> withoutMedia = searchOk(Map.of("term", "love", "limit", 10)).jsonPath().getList(ids, Long.class);
+        List<Long> mediaAll = searchOk(Map.of("term", "love", "media", "all", "limit", 10))
+                .jsonPath().getList(ids, Long.class);
+
+        assertFalse(withoutMedia.isEmpty(), "expected results");
+        assertEquals(mediaAll, withoutMedia);
     }
 
     @ParameterizedTest(name = "TC-M04 media={0} is rejected")
