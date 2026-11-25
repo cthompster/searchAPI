@@ -1,3 +1,4 @@
 target/
+test-history/
 .idea/
 *.iml
