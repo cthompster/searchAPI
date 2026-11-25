@@ -9,8 +9,7 @@ Guidance for Claude Code in this repository. Human-facing docs: `README.md` (how
 A Java 17 + Maven suite of JUnit 5 and Rest Assured tests for the **live** iTunes Search API
 (`https://itunes.apple.com/search`). All code is test code under `src/test/java/`; there is no `src/main`.
 
-- `itunes/*Test.java`: one class per parameter (`TermSearchTest`, `MediaTypeTest`, `LimitTest`,
-  `CountryTest`) plus `CombinedParamsTest` and `ResponseFormatTest`.
+- `itunes/*Test.java`: one class per parameter, plus combined parameters and response format (see README).
 - `itunes/support/ITunesApi.java`: shared request setup and checks. Use `searchOk(params)` (200 plus the
   common checks), `searchRejected(params, key)` (400 naming the key), `results`, `songIds`, `typeOf`,
   `storeUrlOf`, `lower` and `limitTolerance` rather than repeating them. `ThrottleFilter` spaces requests.
@@ -19,12 +18,13 @@ A Java 17 + Maven suite of JUnit 5 and Rest Assured tests for the **live** iTune
 
 ## Running the tests
 
-All commands run from the repo root. Details and the `-D` settings are in README "How to run".
+All commands run from the repo root. Details and the `-D` settings are in README "How to run" (and
+`-DbaseUri` in TEST_PLAN section 3).
 
 | Command | What it does |
 |---|---|
 | `mvn -q test-compile` | Compile only (`-Xlint:all -Werror`, so warnings fail the build) |
-| `mvn test -Dtest=RunHistoryListenerTest` | Offline tests only, under a second, no API calls |
+| `mvn test -Dtest=RunHistoryListenerTest` | Offline tests only (they take under a second), no API calls |
 | `mvn test -Dtest=LimitTest` / `'-Dtest=LimitTest#limitOneIsExact'` | One class / one test against the live API |
 | `mvn test` | Everything: 72 tests (43 live, 29 offline), about 2½ minutes |
 

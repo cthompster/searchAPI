@@ -22,7 +22,7 @@ Requires Java 17 and Maven 3.9+ (the build checks both).
 
 | Command | What it does |
 |---|---|
-| `mvn test` | All tests, about 2 minutes (requests are spaced 3 s apart to respect Apple's rate limit) |
+| `mvn test` | All tests, about 2½ minutes (requests are spaced 3 s apart to respect Apple's rate limit) |
 | `mvn test -Dtest=LimitTest` | One class |
 | `mvn test -Dtest='LimitTest#limitOneIsExact'` | One test |
 | `mvn -q test-compile` | Compile only (warnings fail the build) |
